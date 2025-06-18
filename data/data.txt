@@ -1,0 +1,235 @@
+####################### bima Payment Transaction Documentation################
+
+### bima Dependent Payments Configurations ##################################
+# Databases Table
+[TransactionDB]: 10.45.101.226:3306
+Dependent Table:
+[apitranslog_table]: selfcare_trans_bima.api_trans_logs 
+[payments_table]: selfcare_trans_bima.payments 
+[pushtranslogs_table]: selfcare_trans_bima.push_trans_logs
+
+[ConfigDB]: 10.45.101.215:3306
+Dependent Table:
+[url_config]: cms.url_config 
+
+#Callback Related configurations
+Below configurations will be available in the GCP Ingress:
+[GCP_ILB] : http://10.45.117.50
+
+Below configurations will be available in the Bigtable (loginservice table):
+[DPP_payments_Callback]: [GCP_ILB]/callback/v2/esb/results
+[AJ_payments_Callback]: [GCP_ILB]/callback/v2/pgw/results
+[TIBCO_fullfillment_Callback]: [GCP_ILB]/callback/v2/sr/results
+
+
+Below configurations will be available in [ConfigDB] in [url_config] table (refer to 'url' column):
+
+# [Payment initiation] URL
+[AJ payment initiate]: https://ipg.artajasa.co.id:3067/rest/api/sof_payment_only
+After initiation callback will be received from AJ to [AJ_payments_Callback]
+
+[dpp payment initiate]: https://DPP-PROD.IOH.CO.ID:8084/DPP/Payment/v1
+After initiation callback will be received from TIBCO to [DPP_payments_Callback]
+
+[cns_balancetransfer_commit]: https://cgw.ioh.co.id/prod/tmf654-api/prepaybalancemanagement/v4/transferbalance
+
+[VAS_Initiate]:
+No callback, Activation will only  happened via SMS
+Sample Payload:
+common-smsprocessor
+[{"oa":"62895379402266","service-id":"1","tid":"311582032267","da":"97333","esmeid":"30","dcs":17,"msg":"REG+VIUG3","extra-params":"x_dump=1","validity":"0","priority":"0","sr":"1","retry-count":"0"}]
+
+
+
+
+[bima_transfer_quota]: https://cgw.ioh.co.id/prod/bima/transferquota
+No callback, only API response
+
+# [Fullfillment initiation] URL
+[bima_gamezone_serviceReg_fullfilment]: http://10.64.41.38:45020/Business_Process/ODP_Interfaces/Service_Registration_APISecurity
+After initiation callback will be received from TIBCO to [TIBCO_fullfillment_Callback]
+
+No Fullillment callback for below Fullfillment request:
+[bima_cvm_fullfilment] : http://10.64.26.175:8092/rest/authkey/!CLAIM_METHOD!/msisdn/!MSISDN_VALUE!/kpi/acceptOffer
+If fullfillment are failed there is a retry mechanism:
+[bima_retry_fullfilment]: http://10.64.26.175:8092/rest/authkey/!CLAIM_METHOD!/msisdn/!MSISDN_VALUE!/kpi/acceptOffer
+
+
+[bima_serviceReg_fullfilment]: https://cgw.ioh.co.id/prod/bima/ServiceRegistrationFulfillment
+After initiation callback will be received from TIBCO to [TIBCO_fullfillment_Callback]
+
+
+# Elastic Search
+Table Name: gw_payments_bima  based on Transid,msisdn 
+Sample query: 
+        GET gw_payments_bima-*/_search
+{
+ "query": { "term":{
+   "transid": {
+     "value":"6102628963647493220240830142605885"
+   }
+   } 
+ }
+}
+
+#############################################################################
+
+########################### bima TRANSACTION Status ###########################################################
+status of the transaction is updated in the [TransactionDB] in [payments_table] status field:
+      0: User-initiated transaction
+      1: Transaction failed during initiation
+      2: Successful transaction
+      3: Transaction failed due to fulfillment failure
+
+
+########################### bima TRANSACTION TYPE ###########################################################
+Available Transactiontype in [ConfigDB] [payments_table]:- 'BALANCE','CONTENT','CVM','EMGSERVICE','PACKAGE','RELOAD','RECOM','BILLPAY'
+
+#  PREPAID Only Transactions
+[RELOAD Transaction] - Transaction when users are recharging their number balance
+DB Query Conditions for [TransactionDB] in [payments_table]: operationtype='BUY' AND transactiontype='RELOAD'
+  # 2. Payment channel behaviour
+    BIMA will initiate respective Payments Flow depends on selected paymenttype
+
+[Balance TransferTransaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: operationtype='TRANSFER'	AND transactiontype='BALANCE'
+  # 2. Payment channel behaviour
+
+
+# Common Transactions (PREPAID & POSTPAID Users)
+# ATL packages ###################
+[ATL Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: transactiontype='PACKAGE'
+  # 2. Payment channel behaviour
+      - BIMA will initiate respective Payments Flow depends on selected paymenttype
+      - Transaction Fulfillment callback will considered for this type of transaction
+
+[Game Packs Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: gamezoneid <> '0' AND transactiontype='BUY' AND transactiontype='PACKAGE'
+  # 2. Payment channel behaviour
+      - BIMA will initiate respective Payments Flow depends on selected paymenttype
+      - Transaction Fulfillment callback will considered for this type of transaction
+
+[Sent Quota Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: operationtype = 'GIFT' AND AND paymenttype = 'AIRTIME' AND transactiontype = 'PACKAGE' 
+  # 2. Payment channel behaviour
+       - This type of transaction will only applicable for [AIRTIME]
++      - ⚠️ Strictly applicable ONLY for [AIRTIME] — NOT supported any other payments
+
+
+#################################
+
+
+# CVM Packages ###################################
+[CVM Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: transactiontype='CVM'
+  # 2. Payment channel behaviour
+    - BIMA will initiate respective Payments Flow depends on selected paymenttype
+    - Transaction Fulfillment callback will be not considered for this type of transaction
+
+[Happy Flex Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]:productname = 'Happy flex' AND transactiontype='CVM' OR transactiontype='RECOM'
+  # 2. Payment channel behaviour
+    - BIMA will initiate respective Payments Flow depends on selected paymenttype
+    - Transaction Fulfillment callback will be not considered for this type of transaction
+##################################################
+
+
+# POSTPAID transactions ############
+[Paybill Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: WHERE transactiontype = 'BILLPAY'
+  # 2. Payment channel behaviour
+
+####################################
+
+
+# Other Transactions ###############
+[Emergency packages Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]:  transactiontype = 'EMGSERVICE'
+  # 2. Payment channel behaviour
+
+[Content Packs VAS Transaction]
+DB Query Conditions for [TransactionDB] in [payments_table]: transactiontype = 'CONTENT' 
+  # 2. Payment channel behaviour
+  Activation will only happen from the SMS. From application side BIMA will send SMS [VAS_Initiate]
+####################################
+
+
+########### Payments Flow ###########################################################################
+Common Flow of BIMA Payments:
+
+[AIRTIME Payments Flow] - When user are BUY/GIFT using [AIRTIME Payments]
+BIMA will directly calling fulfillment API based on respective selected packages, transaction status will based on fulfillment response
+Fulfillment conditions:
+  - For [CVM Transaction] & [Happy Flex Transaction] BIMA will send fulfillment request to [bima_cvm_fullfilment], after getting success BIMA will only depends on response from Flytext to update transaction status
+  - For [Content Packs VAS Transaction] BIMA will send fulfillment request to [bima_cvm_fullfilment]
+  - For [ATL Transaction] BIMA will send fulfillment request to [bima_serviceReg_fullfilment], after getting success response BIMA will expect [TIBCO_fullfillment_Callback] from TIBCO to update transaction status
+  - For [Game Packs Transaction] BIMA will send [bima_gamezone_serviceReg_fullfilment], after getting success response BIMA will expect [TIBCO_fullfillment_Callback] to update transaction status
+  - [Sent Quota Transaction] BIMA will send [bima_transfer_quota] to TIBCO, after that BIMA will depends only on the API responses to update transaction status
+
+
+[ATL package flow] - When user are BUY/GIFT [ATL Transaction]
+# 1. Payments initiation 
+  BIMA apps will send paymets initiation request to [AJ payment initiate] or [dpp payment initiate] based on selected paymenttype
+  - For [AJ Payments] callback will be sent to [AJ_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+  - For [DPP Payments] callback will be sent to [DPP_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+
+# 2. Payments callback 
+  - For [AJ Payments] callback will be sent to [AJ_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+  - For [DPP Payments] callback will be sent to [DPP_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+# 3. Sending fulfillment (TIBCO)
+# 4. Fulfillment Callback  (TIBCO)
+
+[CVM package flow] - When user are BUY/GIFT [CVM Transaction]
+# 1. Payments initiation
+  BIMA apps will send paymets initiation request to [AJ payment initiate] or [dpp payment initiate] based on selected paymenttype
+  - For [AJ Payments] callback will be sent to [AJ_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+  - For [DPP Payments] callback will be sent to [DPP_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+# 2. Payments callback 
+  - For [AJ Payments] callback will be sent to [AJ_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+  - For [DPP Payments] callback will be sent to [DPP_payments_Callback], if callback is coming as failed then the [TransactionDB] in [payments_table] status will be 3
+# 3. Sending fulfillment (Flytext)
+# 4. No fulfillment callback expected for this payments flow
+
+[Balance transfer Flow]
+# 1. request & validate otp (internal BIMA)
+# 2. Send balance transfer request to TIBCO) [cns_balancetransfer_commit]
+# 3. No fullfillment
+
+[Reload voucher Payments]
+# 1. User input voucher code in BIMA app
+# 2. Sending Reload balance request (TIBCO)
+
+##################################################
+
+
+########### Payments Type & Payments Channels ###########################################################################
+For below paymenttype BIMA will initiate flow [ATL package flow] or [CVM package flow] based on Transactiontype
+
+[AIRTIME Payments]
+paymenttype: AIRTIME -> When users are paying using their main Balance
+
+[AJ Payments]
+paymenttype: TRANSFERS -> When users are paying using Bank transfers
+paymentchannels ['VA_BCA','VA_BNI','VA_BRI','VA_MANDIRI']
+paymenttype: CARD -> When users are paying using their Credit card
+
+[DPP Payments]
+paymenttype: WALLET -> When users are buying using WALLET/electronic money
+available paymentchannel: [GOPAY,OVO,DANA,SHOPEEPAY]
+
+[SDK Payments]
+paymenttype: INDEPAY -> If users are paying using their INDEPAY account, there will be SDK involvement for this type of payment
+
+[Balance Transfer Payments]
+paymenttype: BALANCE -> This payment will be only applicable for Balance Transfer
+
+[Reload voucher Payments]
+paymenttype: VOUCHER -> When user are doing RELOAD balance using voucher code
+
+
+
+
+Pasti Murah package will be kept in cache
+For RFU package we will call 3 APIs (BIMA_lebih_hemat)
+

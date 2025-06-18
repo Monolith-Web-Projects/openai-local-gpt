@@ -1,0 +1,9 @@
+# pip install -r requirements.txt
+# pip install --upgrade -r requirements.txt
+langchain
+langchain-community
+langchain-openai
+faiss-cpu
+openai
+tiktoken
+python-dotenv
